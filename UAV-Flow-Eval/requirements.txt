@@ -1,0 +1,8 @@
+setuptools
+numpy
+Pillow
+gym
+gym-unrealcv
+opencv-python
+matplotlib
+requests

@@ -451,6 +451,7 @@ if __name__ == '__main__':
     parser.add_argument("-f", '--json_folder', default=DEFAULT_JSON_FOLDER, help='Folder path containing batch task json files')
     parser.add_argument("-o", '--images_dir', default=DEFAULT_IMAGES_DIR, help='Directory to save images and trajectory logs')
     parser.add_argument("-p", '--server_port', default=DEFAULT_SERVER_PORT, type=int, help='Inference server port')
+    parser.add_argument('--server_url', default=None, type=str, help='Full inference server URL (overrides --server_port), e.g. https://your-app.modal.run/predict')
     parser.add_argument("-m", '--max_steps', default=DEFAULT_MAX_STEPS, type=int, help='Maximum inference steps')
     parser.add_argument("-i", "--instruction_type", default=DEFAULT_INSTRUCTION_TYPE, choices=["instruction", "instruction_unified"], help='Choose which field to use: instruction or instruction_unified')
     parser.add_argument('--log_level', default='INFO', choices=['DEBUG','INFO','WARNING','ERROR','CRITICAL'], help='Logging level')
@@ -474,7 +475,12 @@ if __name__ == '__main__':
     min_span_y = args.min_span_y if args.min_span_y is not None else DEFAULT_MIN_SPAN_Y
     min_span_z = args.min_span_z if args.min_span_z is not None else DEFAULT_MIN_SPAN_Z
 
-    server_url = f"http://127.0.0.1:{args.server_port}/predict"
+    if args.server_url:
+        server_url = args.server_url
+        if not server_url.endswith('/predict'):
+            server_url = server_url.rstrip('/') + '/predict'
+    else:
+        server_url = f"http://127.0.0.1:{args.server_port}/predict"
 
     env = gym.make(args.env_id)
     if int(args.time_dilation) > 0:
