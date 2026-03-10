@@ -37,7 +37,7 @@ PLOT_YAW_ARROW_MIN_LEN_3D: int = 12
 
 
 
-def send_prediction_request(image: Image, proprio: np.ndarray, instr: str, server_url: str) -> Optional[Dict[str, Any]]:
+def send_prediction_request(image: Image, proprio: np.ndarray, instr: str, server_url: str, chunk_size: int = 1) -> Optional[Dict[str, Any]]:
     """Send a request to the inference service and return JSON response.
 
     Args:
@@ -45,6 +45,7 @@ def send_prediction_request(image: Image, proprio: np.ndarray, instr: str, serve
         proprio: Vehicle state vector (np.ndarray), converted to list.
         instr: Text instruction.
         server_url: Inference service /predict endpoint URL.
+        chunk_size: Number of action steps to predict in one call.
     Returns:
         dict or None: Parsed JSON if successful, otherwise None on error.
     """
@@ -58,7 +59,8 @@ def send_prediction_request(image: Image, proprio: np.ndarray, instr: str, serve
     payload: Dict[str, Any] = {
         'image': img_base64,
         'proprio': proprio_list,
-        'instr': instr
+        'instr': instr,
+        'chunk_size': chunk_size
     }
     headers = {
         'Content-Type': 'application/json'
@@ -68,7 +70,7 @@ def send_prediction_request(image: Image, proprio: np.ndarray, instr: str, serve
             server_url,
             data=json.dumps(payload),
             headers=headers,
-            timeout=30,
+            timeout=30 * chunk_size,
         )
         response.raise_for_status()
         return response.json()
@@ -77,11 +79,12 @@ def send_prediction_request(image: Image, proprio: np.ndarray, instr: str, serve
         return None
 
 
-def draw_2d_trajectory_from_log(log_path: str, save_path: str, instruction: str, target: Optional[List[float]], tick_x: Optional[float] = None, tick_y: Optional[float] = None, min_span_x: Optional[float] = None, min_span_y: Optional[float] = None) -> None:
+def draw_2d_trajectory_from_log(log_path: str, save_path: str, instruction: str, target: Optional[List[float]], tick_x: Optional[float] = None, tick_y: Optional[float] = None, min_span_x: Optional[float] = None, min_span_y: Optional[float] = None, gt_path_data: Optional[List[List[float]]] = None) -> None:
     """Plot 2D trajectory from log and save the image.
 
     - Fixed tick step: use tick_x/tick_y to specify grid spacing
     - Minimum span: use min_span_x/min_span_y to expand view when data span is smaller
+    - gt_path_data: optional GT reference_path_preprocessed for overlay
     """
     with open(log_path, 'r') as f:
         log = json.load(f)
@@ -117,6 +120,11 @@ def draw_2d_trajectory_from_log(log_path: str, save_path: str, instruction: str,
     dy = np.sin(yaw) * arrow_length
 
     plt.figure(figsize=TRAJ_IMG_SIZE_2D)
+    # GT overlay
+    if gt_path_data is not None and len(gt_path_data) > 0:
+        gt = np.array(gt_path_data)
+        if gt.ndim == 2 and gt.shape[1] >= 2:
+            plt.plot(gt[:, 1], gt[:, 0], color='orange', linestyle='--', linewidth=1.5, alpha=0.7, label='GT')
     if target is not None:
         plt.scatter(target[1], target[0], color='red', label='target')
     plt.plot(y, x, color='blue', label='trajectory')
@@ -155,11 +163,12 @@ def draw_2d_trajectory_from_log(log_path: str, save_path: str, instruction: str,
     plt.close()
 
 
-def draw_3d_trajectory_from_log(log_path: str, save_path: str, instruction: str, target: Optional[List[float]], tick_x: Optional[float] = None, tick_y: Optional[float] = None, tick_z: Optional[float] = None, min_span_x: Optional[float] = None, min_span_y: Optional[float] = None, min_span_z: Optional[float] = None) -> None:
+def draw_3d_trajectory_from_log(log_path: str, save_path: str, instruction: str, target: Optional[List[float]], tick_x: Optional[float] = None, tick_y: Optional[float] = None, tick_z: Optional[float] = None, min_span_x: Optional[float] = None, min_span_y: Optional[float] = None, min_span_z: Optional[float] = None, gt_path_data: Optional[List[List[float]]] = None) -> None:
     """Plot 3D trajectory from log and save the image.
 
     - Fixed tick step: use tick_x/tick_y/tick_z to specify grid spacing
     - Minimum span: use min_span_x/min_span_y/min_span_z to expand view when data span is smaller
+    - gt_path_data: optional GT reference_path_preprocessed for overlay
     """
     with open(log_path, 'r') as f:
         log = json.load(f)
@@ -205,6 +214,11 @@ def draw_3d_trajectory_from_log(log_path: str, save_path: str, instruction: str,
 
     fig = plt.figure(figsize=TRAJ_IMG_SIZE_3D)
     ax = fig.add_subplot(111, projection='3d')
+    # GT overlay
+    if gt_path_data is not None and len(gt_path_data) > 0:
+        gt = np.array(gt_path_data)
+        if gt.ndim == 2 and gt.shape[1] >= 3:
+            ax.plot(gt[:, 1], gt[:, 0], gt[:, 2], color='orange', linestyle='--', linewidth=1.5, alpha=0.7, label='GT')
     ax.plot(y, x, z, color='blue', label='Trajectory')
     ax.quiver(y, x, z, dy, dx, dz, color='green', length=1.0, normalize=False, linewidth=0.5, label='Yaw direction')
     ax.scatter(y[0], x[0], z[0], color='blue', s=50)
@@ -257,7 +271,7 @@ def draw_3d_trajectory_from_log(log_path: str, save_path: str, instruction: str,
 
 
 def control_loop(initial_pos: List[float], env: Any, instruction: str, max_steps: Optional[int], trajectory_log: List[Dict[str, Any]], server_url: str) -> None:
-    """Main control loop: capture image/state, call inference, act in env, log trajectory."""
+    """Stop-and-infer control loop: capture image/state, call inference, act in env, log trajectory."""
     initial_x, initial_y, initial_z = initial_pos[0:3]
     initial_yaw = initial_pos[4]
     env.unwrapped.unrealcv.set_obj_location(env.unwrapped.player_list[0], initial_pos[0:3])
@@ -265,7 +279,7 @@ def control_loop(initial_pos: List[float], env: Any, instruction: str, max_steps
     set_cam(env)
     time.sleep(SLEEP_AFTER_RESET_S)
     image = env.unwrapped.unrealcv.get_image(0, 'lit')
-    
+
     current_pose: List[float] = [0, 0, 0, 0]
     logger.info('Start control loop!')
     last_pose: Optional[List[float]] = None
@@ -290,19 +304,16 @@ def control_loop(initial_pos: List[float], env: Any, instruction: str, max_steps
         while True:
             set_cam(env)
             logger.debug(f"current_pose: {current_pose}")
-            t1 = time.time()
             response = send_prediction_request(
                 image=Image.fromarray(image),
                 proprio=np.array(current_pose),
                 instr=instruction,
                 server_url=server_url
             )
-            t2 = time.time()
-            # logger.info(f"Prediction time: {t2 - t1} seconds")
             if response is None:
                 logger.warning("No valid response, ending control")
                 break
-            
+
             try:
                 action_poses = response.get('action')
                 if not isinstance(action_poses, list) or len(action_poses) == 0:
@@ -430,7 +441,7 @@ if __name__ == '__main__':
     DEFAULT_TIME_DILATION = 10
     DEFAULT_SEED = 0
     DEFAULT_JSON_FOLDER = r'./test_jsons'
-    DEFAULT_IMAGES_DIR = f'./results/{DEFAULT_ENV_ID}/openvla'
+    DEFAULT_IMAGES_DIR = f'./results/5Weighted/openvla'
     DEFAULT_SERVER_PORT = 5007
     DEFAULT_MAX_STEPS = 100
     DEFAULT_INSTRUCTION_TYPE = "instruction"
@@ -575,9 +586,11 @@ if __name__ == '__main__':
         target_local = None
         if target_pos is not None and initial_pos is not None and len(initial_pos) > 0:
             target_local = world_to_local(target_pos, initial_pos)
+        # Load GT reference path for overlay
+        gt_path_data = manual_data.get('reference_path_preprocessed', None)
         try:
-            draw_2d_trajectory_from_log(traj_json_path, os.path.join(images_dir, base_name + '_2d.png'), instruction, target_local, tick_x=tick_x, tick_y=tick_y, min_span_x=min_span_x, min_span_y=min_span_y)
-            draw_3d_trajectory_from_log(traj_json_path, os.path.join(images_dir, base_name + '_3d.png'), instruction, target_local, tick_x=tick_x, tick_y=tick_y, tick_z=tick_z, min_span_x=min_span_x, min_span_y=min_span_y, min_span_z=min_span_z)
+            draw_2d_trajectory_from_log(traj_json_path, os.path.join(images_dir, base_name + '_2d.png'), instruction, target_local, tick_x=tick_x, tick_y=tick_y, min_span_x=min_span_x, min_span_y=min_span_y, gt_path_data=gt_path_data)
+            draw_3d_trajectory_from_log(traj_json_path, os.path.join(images_dir, base_name + '_3d.png'), instruction, target_local, tick_x=tick_x, tick_y=tick_y, tick_z=tick_z, min_span_x=min_span_x, min_span_y=min_span_y, min_span_z=min_span_z, gt_path_data=gt_path_data)
             logger.info(f"Trajectory and images saved: {base_name}")
         except Exception as e:
             logger.error(f"Plotting failed: {e}")

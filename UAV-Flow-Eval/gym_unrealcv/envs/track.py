@@ -189,7 +189,7 @@ class Track(UnrealCv_base):
 
     def get_tracker_init_point(self, target_pos, distance, direction=None):
         if direction is None:
-            direction = 2 * np.pi * np.random.sample(1)
+            direction = 2 * np.pi * np.random.random()
         else:
             direction = direction % (2 * np.pi)
 

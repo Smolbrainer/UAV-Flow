@@ -1,8 +1,8 @@
 {
     "env_name": "DowntownWest",
-    "env_bin": "Collection_WinNoEditor_0424_25\\Collection\\Binaries\\Win64\\Collection.exe",
+    "env_bin": "/mnt/e/UnrealEnv/Collection_WinNoEditor_0424_25/Collection/Binaries/Win64/Collection.exe",
     "env_map": "DowntownWest",
-    "env_bin_win": "D:\\unrealzoo-gym-new\\UnrealEnv\\Collection_WinNoEditor_0424_25\\Collection\\Binaries\\Win64\\Collection.exe",
+    "env_bin_win": "E:\\UnrealEnv\\Collection_WinNoEditor_0424_25\\Collection\\Binaries\\Win64\\Collection.exe",
     "env_bin_mac": "Collection/Binaries/Mac/Collection",
     "third_cam": {
         "cam_id": 0,

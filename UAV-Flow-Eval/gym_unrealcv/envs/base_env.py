@@ -629,11 +629,62 @@ class UnrealCv_base(gym.Env):
         return np.array(pose_obs), relative_pose
 
     def launch_ue_env(self):
-        # launch the UE4 binary
-        env_ip, env_port = self.ue_binary.start(docker=self.docker, resolution=self.resolution, display=self.display,
-                                               opengl=self.use_opengl, offscreen=self.offscreen_rendering,
-                                               nullrhi=self.nullrhi,sleep_time=10)
+        env_ip = '127.0.0.1'
+        env_port = self.ue_binary.read_port()
 
+        # On WSL, connect to the Windows UE instance via the host IP
+        if 'linux' in sys.platform and self.ue_binary.path2binary.endswith('.exe'):
+            import socket, subprocess, time
+            # WSL2 needs the Windows host IP, not 127.0.0.1
+            try:
+                host_ip = subprocess.check_output(
+                    ['ip', 'route', 'show', 'default']
+                ).decode().split()[2]
+            except Exception:
+                host_ip = env_ip
+            # Try host IP first, then localhost
+            for try_ip in ([host_ip, env_ip] if host_ip != env_ip else [env_ip]):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                result = sock.connect_ex((try_ip, env_port))
+                sock.close()
+                if result == 0:
+                    env_ip = try_ip
+                    print(f'Found running UE instance on {env_ip}:{env_port}, connecting...')
+                    break
+            else:
+                # Not running yet — try to launch via WSL interop
+                print(f'No UE instance found on port {env_port}, launching .exe via WSL...')
+                win_path = subprocess.check_output(
+                    ['wslpath', '-w', self.ue_binary.path2binary]
+                ).decode().strip()
+                subprocess.Popen(
+                    ['cmd.exe', '/C', 'start', '', win_path],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, start_new_session=True
+                )
+                print('Waiting for UE to start (this may take a while)...')
+                for i in range(60):
+                    time.sleep(5)
+                    for try_ip in ([host_ip, env_ip] if host_ip != env_ip else [env_ip]):
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(2)
+                        result = sock.connect_ex((try_ip, env_port))
+                        sock.close()
+                        if result == 0:
+                            env_ip = try_ip
+                            print(f'UE is ready on {env_ip}:{env_port}!')
+                            break
+                    else:
+                        continue
+                    break
+                else:
+                    raise RuntimeError(f'Timed out waiting for UE on port {env_port}')
+        else:
+            # Normal launch for native Linux/Mac/Windows
+            env_ip, env_port = self.ue_binary.start(docker=self.docker, resolution=self.resolution, display=self.display,
+                                                   opengl=self.use_opengl, offscreen=self.offscreen_rendering,
+                                                   nullrhi=self.nullrhi, sleep_time=10)
 
         # connect to UnrealCV Server
         self.unrealcv = Character_API(port=env_port, ip=env_ip, resolution=self.resolution, comm_mode=self.comm_mode)
